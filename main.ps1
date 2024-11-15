@@ -1,32 +1,110 @@
+
+
+
 function get_logs {
     param (
         [int]$event_id
+        
     )
 
     try {
         $logs = Get-WinEvent -FilterHashtable @{LogName = 'Microsoft-Windows-Sysmon/Operational'; ID = $event_id }
     }
     catch {
-        Write-Host "Wystapil blad podczas wykonywania polecenia."
-        exit
-    }
-
-    if ($logs.Count -eq 0) {
-        Write-Host "Nie znaleziono zdarzen dla podanego Event ID."
+        Write-Host "Wystąpił błąd podczas wykonywania polecenia. Upewnij się, że masz odpowiednie uprawnienia." -ForegroundColor Red 
         return
     }
 
-    foreach ($log in $logs) {
-        Write-Host $log.Message
-        Write-Host "***************************************************"
-    }  
-    Write-Host " "
-    Write-Host  "Znaleziono $($logs.count) zdarzen"
-    Write-Host "---------------------------------------------------------"
+    if ($logs.Count -eq 0) {
+        Write-Host "Nie znaleziono logów dla tego zdarzenia!"
+        return
+    }
 
+    $results = @()
+    foreach ($log in $logs) {
+        $message = $log.Message -split "`n" | ForEach-Object { $_.Trim() } 
+        $data = @{}
+
+        foreach ($line in $message) {
+            if ($line -match "^(.*?):\s*(.+)$") {
+                $key = $matches[1]
+                $value = $matches[2]
+                $data[$key] = $value
+            }
+        }
+
+       # $data["TimeCreated"] = $log.TimeCreated
+       # $data["EventID"] = $log.Id
+       # $data["ProviderName"] = $log.ProviderName
+
+        $results += [PSCustomObject]$data
+    }
+
+    $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+    $outputPath = "EventLogs_EventID_${event_id}_$timestamp.csv"
+
+    if ($logs.Count -gt 100) {
+        $results | Export-Csv -Path $outputPath -NoTypeInformation -Encoding UTF8
+        Write-Host "`nZnaleziono $($logs.Count) zdarzeń.`nDane zapisano w pliku: $outputPath" -ForegroundColor Green 
+    } else {
+        $results | Format-Table -AutoSize -Wrap
+
+        $results | Export-Csv -Path $outputPath -NoTypeInformation -Encoding UTF8
+        Write-Host "`nZnaleziono $($logs.Count) zdarzeń.`nDane zapisano w pliku: $outputPath" -ForegroundColor Green 
+    }
+
+    Write-Host "---------------------------------------------------------`n"  
 }
 
+
+
+
+
 function show_event_id_help {
+    param (
+        $events
+        
+    )
+   
+    Write-Host "`nID | Tag | Event" -ForegroundColor Blue
+    Write-Host "------------------------------------------" -ForegroundColor Blue
+
+    foreach ($event in $events) {
+        Write-Host "$($event.ID) | $($event.Tag) | $($event.Event)`n" -ForegroundColor Blue
+        Write-Host "------------------------------------------------------------" -ForegroundColor Blue
+
+    }
+   
+}
+
+function get_event_id_or_help {
+    param (
+        $events
+        
+    )
+    while ($true) {
+        Write-Host "`nWpisz Event ID aby wyswietlic zdarzenia, lub 'h' aby otrzymac pomoc`n" 
+        $chosen_sign = Read-Host " "
+
+        if ($chosen_sign -eq 'h') {
+            show_event_id_help -events  $events
+        }
+        elseif ($chosen_sign -match '^\d+$') {
+            $chosen_sign_int = [int]$chosen_sign
+            $event_ID_description = ($events | Where-object {$_.ID -eq $chosen_sign_int}).Event
+
+            if ($chosen_sign_int -ge 1 -and $chosen_sign_int -le 29) {
+                return $chosen_sign_int,  $event_ID_description
+            } else {
+                Write-Host "Nieprawidlowy znak lub ID poza zakresem (1-29)!"
+            }
+        }
+        else {
+            Write-Host "Nieprawidlowy znak! Musisz wpisac event ID lub 'h' dla pomocy.`n"   -ForegroundColor DarkRed
+        }
+    }
+}
+function main {
     $events = @(
         @{ID = 1; Tag = "ProcessCreate"; Event = "Process Create" },
         @{ID = 2; Tag = "FileCreateTime"; Event = "File creation time" },
@@ -59,40 +137,11 @@ function show_event_id_help {
         @{ID = 29; Tag = "FileExecutableDetected"; Event = "File Executable Detected" }
     )
 
-    Write-Host "ID    |   Tag                 | Event"
-    Write-Host "------------------------------------------"
 
-    foreach ($event in $events) {
-        Write-Host "$($event.ID) | $($event.Tag) | $($event.Event)`n"
-    }
-}
 
-function get_event_id_or_help {
     while ($true) {
-        Write-Host "Wpisz Event ID aby wyswietlic zdarzenia, lub 'h' aby otrzymac pomoc" 
-        $chosen_sign = Read-Host " "
-
-        if ($chosen_sign -eq 'h') {
-            show_event_id_help
-            Write-Host "Wpisz Event ID aby wyswietlic zdarzenia, lub 'h' aby otrzymac pomoc" 
-        }
-        elseif ($chosen_sign -match '^\d+$') {
-            $chosen_sign_int = [int]$chosen_sign
-            if ($chosen_sign_int -ge 1 -and $chosen_sign_int -le 29) {
-                return $chosen_sign_int
-            } else {
-                Write-Host "Nieprawidlowy znak lub ID poza zakresem (1-29)!"
-            }
-        }
-        else {
-            Write-Host "Nieprawidlowy znak! Musisz wpisac liczbe lub 'h' dla pomocy."
-        }
-    }
-}
-function main {
-    while ($true) {
-    $event_id = get_event_id_or_help
-    Write-Host "Receiving Logs for Event ID: $event_id"
+    $event_id ,  $event_ID_description = get_event_id_or_help -events $events
+    Write-Host "Receiving Logs for Event ID: $event_id, Event Description: $event_ID_description" -ForegroundColor Yellow
     get_logs -event_id $event_id
 
     }
